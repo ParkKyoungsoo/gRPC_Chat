@@ -1,45 +1,47 @@
 import * as grpc from '@grpc/grpc-js';
-import * as protoloader from '@grpc/proto-loader';
-import { ProtoGrpcType } from './proto/grpc_chat';
+import { ChatServiceService, IChatServiceServer } from './proto/grpc_chat_grpc_pb';
+import { ChatMessage } from './proto/grpc_chat_pb';
 
-const packageDefinition: protoloader.PackageDefinition = protoloader.loadSync('./proto/grpc_chat.proto');
-const grpcChat:ProtoGrpcType = (grpc.loadPackageDefinition(packageDefinition) as unknown) as ProtoGrpcType;
-const clients: Map<any,any> = new Map();
+const clients: Map<grpc.MetadataValue[], grpc.ServerDuplexStream<ChatMessage, ChatMessage> > = new Map();
+const chatService: IChatServiceServer = {
+    chat(call: grpc.ServerDuplexStream<ChatMessage, ChatMessage> ): void {
 
-const chat = (call:any):void => {
-    call.on('data', (chatMessage: any): void => {
-        const user: string = call.metedata.get('user');
-        const msg: string = chatMessage.message;
-        console.log(`${user} ==> ${msg}`);
-        for(let [msgUser, userCall] of clients) {
-            if(msgUser !== user){
-                userCall.write({
-                        fromName: user,
-                        message: msg
-                    });
-                }
+
+        call.on('data', (chatMessage: ChatMessage):void => {
+            const user: grpc.MetadataValue[] = call.metadata.get('user');
+            const msg: string = chatMessage.getMessage();
+            console.log(`${user} ==> ${msg}`);
+            for(const [msgUser, userCall] of clients) {                
+                if(msgUser !== user) {
+                    const serverMessage = new ChatMessage();
+                    serverMessage.setFromname(user.toString());
+                    serverMessage.setMessage(msg);
+                    userCall.write(serverMessage);
+                }                
             }
-    
+
             if(clients.get(user) === undefined) {
                 clients.set(user, call);
             }
         });
+
         call.on('end', (): void => {
-            call.write({
-            fromName: 'Chat server',
-            message: 'Nice to see ya! Come back again....'
+            const endMessage = new ChatMessage();
+            endMessage.setFromname('Chat server');
+            endMessage.setMessage('Nice to see ya! Come back again...');
+            call.write(endMessage);
+            call.end();
         });
-        call.end();
-    });
+
+    }
 }
 
 const server: grpc.Server = new grpc.Server();
-server.addService(grpcChat.chatService.ChatService.service, {
-  chat: chat
-});
+server.addService(ChatServiceService, chatService);
 server.bindAsync('0.0.0.0:50051', grpc.ServerCredentials.createInsecure(), (): void => {
-  server.start();
+    server.start();
 });
 
 console.log('gPRC Chat Server started....');
 
+ 
